@@ -92,7 +92,7 @@ No other system-level tools are required. Everything else is handled by Python p
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/macbitlock.git
+git clone https://github.com/Haseeb-Ahmed19933/macbitlock.git
 cd macbitlock
 python3 -m venv .venv
 source .venv/bin/activate
