@@ -154,6 +154,61 @@ def read_volume_header(fp: BinaryIO) -> VolumeHeader:
         return _parse_fat32_header(sector)
 
 
+def build_bitlocker_header(
+    original_sector: bytes,
+    bitlocker_guid: uuid.UUID,
+    metadata_offsets: tuple,
+) -> bytes:
+    """Build a 512-byte BitLocker volume header from an original filesystem boot sector.
+
+    Windows uses -FVE-FS- as OEM and NTFS-style metadata offset positions (160/176/184/192)
+    for ALL BitLocker volumes, including FAT32 (BitLocker To Go).
+
+    For FAT32, Windows modifies BPB fields to prevent accidental mounting as regular FAT32:
+    - num_fats → 0
+    - root_cluster → 0
+    - reserved_sectors and sectors_per_fat are recalculated
+
+    Args:
+        original_sector: The original 512-byte boot sector (NTFS or FAT32).
+        bitlocker_guid: The BitLocker volume GUID.
+        metadata_offsets: Tuple of 3 FVE metadata block offsets (relative to volume start).
+
+    Returns:
+        512-byte BitLocker volume header.
+    """
+    header = bytearray(original_sector[:512])
+
+    header[0:3] = BOOT_ENTRY_POINT
+    header[3:11] = FVE_METADATA_SIGNATURE
+
+    # Modify BPB fields to match Windows 7+ BitLocker format.
+    # The BitLocker format repurposes FAT32 BPB fields with specific values:
+    # - reserved_sectors: 0 (per libbde specification for Win7+)
+    # - num_fats: 0
+    # - sectors_per_fat_32: 0x1FE0 (8160) - fixed constant in all Win7+ BitLocker volumes
+    # - root_cluster: 0
+    # - MetadataLcn: 0 (Win7+ uses direct offsets at 176/184/192 instead)
+    # Windows may update reserved_sectors to a computed value on first access.
+    is_fat32 = original_sector[82:90] == FAT32_FS_SIGNATURE
+    if is_fat32:
+        struct.pack_into("<H", header, 14, 0)              # reserved_sectors = 0
+        header[16] = 0                                     # num_fats = 0
+        struct.pack_into("<I", header, 36, 0x1FE0)         # sectors_per_fat_32 = 8160 (BitLocker constant)
+        struct.pack_into("<I", header, 44, 0)              # root_cluster = 0
+        struct.pack_into("<Q", header, 56, 0)              # MetadataLcn = 0
+
+    # Always use NTFS-style positions for GUID and metadata offsets
+    struct.pack_into("<16s", header, NTFSOffsets.BITLOCKER_GUID, bitlocker_guid.bytes_le)
+    struct.pack_into("<Q", header, NTFSOffsets.FVE_METADATA_1, metadata_offsets[0])
+    struct.pack_into("<Q", header, NTFSOffsets.FVE_METADATA_2, metadata_offsets[1])
+    struct.pack_into("<Q", header, NTFSOffsets.FVE_METADATA_3, metadata_offsets[2])
+
+    header[510:512] = SECTOR_SIGNATURE
+
+    return bytes(header)
+
+
 def read_volume_info(source: Union[str, Path, BinaryIO]) -> VolumeInfo:
     """Read volume info from a file path or file-like object.
 

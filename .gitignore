@@ -17,6 +17,16 @@ test_decrypt.py
 test_all_images.py
 test_images/
 
+# Diagnostic / debug scripts (development only)
+dump_*.py
+check_bpb.py
+compare_metadata.py
+verify_encrypted.py
+dump_before.bin
+
+# Binary dumps
+*.bin
+
 # IDE
 .idea/
 .vscode/
