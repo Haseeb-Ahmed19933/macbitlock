@@ -52,6 +52,10 @@ class EncryptionMethod(IntEnum):
     AES_XTS_256 = 0x8005
 
 
+# Algorithm identifier for AES-256 key wrapping (stored inside VMK containers)
+KEY_WRAP_ALGORITHM_AES256 = 0x2003
+
+
 class KeyProtectionType(IntEnum):
     CLEAR_KEY = 0x0000
     TPM = 0x0100

@@ -1,4 +1,4 @@
-"""BitLocker sector-level decryption: AES-XTS, AES-CBC, and Elephant Diffuser."""
+"""BitLocker sector-level encryption and decryption: AES-XTS, AES-CBC, and Elephant Diffuser."""
 
 import array
 import struct
@@ -26,6 +26,29 @@ def decrypt_sector_cbc(sector_data: bytes, sector_offset: int, fvek: bytes) -> b
     cipher = Cipher(algorithms.AES(fvek), modes.CBC(iv))
     decryptor = cipher.decryptor()
     return decryptor.update(sector_data) + decryptor.finalize()
+
+
+# --- Encryption (reverse of above) ---
+
+
+def encrypt_sector_xts(sector_data: bytes, sector_number: int, fvek: bytes) -> bytes:
+    """Encrypt a sector using AES-XTS."""
+    tweak = struct.pack("<QQ", sector_number, 0)
+    cipher = Cipher(algorithms.AES(fvek), modes.XTS(tweak))
+    encryptor = cipher.encryptor()
+    return encryptor.update(sector_data) + encryptor.finalize()
+
+
+def encrypt_sector_cbc(sector_data: bytes, sector_offset: int, fvek: bytes) -> bytes:
+    """Encrypt a sector using AES-CBC. IV = AES-ECB(fvek, sector_offset as 16-byte LE)."""
+    iv_plain = struct.pack("<QQ", sector_offset, 0)
+    iv_cipher = Cipher(algorithms.AES(fvek), modes.ECB())
+    iv_encryptor = iv_cipher.encryptor()
+    iv = iv_encryptor.update(iv_plain) + iv_encryptor.finalize()
+
+    cipher = Cipher(algorithms.AES(fvek), modes.CBC(iv))
+    encryptor = cipher.encryptor()
+    return encryptor.update(sector_data) + encryptor.finalize()
 
 
 # --- Elephant Diffuser (legacy, Windows Vista/7) ---
@@ -107,6 +130,17 @@ def decrypt_sector_cbc_elephant(
     return bytes(result)
 
 
+def _normalize_method(encryption_method: int) -> int:
+    """Normalize encryption method to 16-bit value.
+
+    Windows sometimes stores the method in both halves of a uint32
+    (e.g. 0x80028002 instead of 0x8002).
+    """
+    if encryption_method > 0xFFFF:
+        return encryption_method & 0xFFFF
+    return encryption_method
+
+
 def _get_keys(fvek_data: bytes, encryption_method: int):
     """Extract FVEK and optional TWEAK key based on encryption method.
 
@@ -114,6 +148,7 @@ def _get_keys(fvek_data: bytes, encryption_method: int):
         first 32 bytes = FVEK (only first 16 used for 128-bit)
         last 32 bytes = TWEAK key (only first 16 used for 128-bit)
     """
+    encryption_method = _normalize_method(encryption_method)
     if encryption_method == EncryptionMethod.AES_CBC_128:
         return fvek_data[:16], None
     elif encryption_method == EncryptionMethod.AES_CBC_256:
@@ -135,6 +170,7 @@ def decrypt_sectors(
     encryption_method: int,
 ) -> bytes:
     """Decrypt multiple contiguous sectors of data."""
+    encryption_method = _normalize_method(encryption_method)
     if len(data) % sector_size != 0:
         raise ValueError(
             f"Data length ({len(data)}) is not a multiple of sector size ({sector_size})"
@@ -171,5 +207,49 @@ def decrypt_sectors(
             )
         else:
             raise ValueError(f"Unknown encryption method: 0x{encryption_method:04x}")
+
+    return bytes(result)
+
+
+def encrypt_sectors(
+    data: bytes,
+    start_offset: int,
+    sector_size: int,
+    fvek: bytes,
+    encryption_method: int,
+) -> bytes:
+    """Encrypt multiple contiguous sectors of data."""
+    encryption_method = _normalize_method(encryption_method)
+    if len(data) % sector_size != 0:
+        raise ValueError(
+            f"Data length ({len(data)}) is not a multiple of sector size ({sector_size})"
+        )
+
+    key, tweak_key = _get_keys(fvek, encryption_method)
+    num_sectors = len(data) // sector_size
+    result = bytearray()
+
+    for i in range(num_sectors):
+        offset = i * sector_size
+        sector_data = data[offset : offset + sector_size]
+        sector_offset = start_offset + offset
+
+        if encryption_method in (
+            EncryptionMethod.AES_XTS_128,
+            EncryptionMethod.AES_XTS_256,
+        ):
+            sector_number = sector_offset // sector_size
+            result.extend(encrypt_sector_xts(sector_data, sector_number, key))
+
+        elif encryption_method in (
+            EncryptionMethod.AES_CBC_128,
+            EncryptionMethod.AES_CBC_256,
+        ):
+            result.extend(encrypt_sector_cbc(sector_data, sector_offset, key))
+
+        else:
+            raise ValueError(
+                f"Encryption not supported for method: 0x{encryption_method:04x}"
+            )
 
     return bytes(result)

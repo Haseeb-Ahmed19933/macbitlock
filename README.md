@@ -2,7 +2,7 @@
 
 **BitLocker, but for macOS.**
 
-An open-source Python tool to decrypt BitLocker-encrypted USB drives, external hard drives, and disk images on your Mac.
+An open-source Python tool to decrypt and encrypt BitLocker-compatible USB drives, external hard drives, and disk images on your Mac.
 
 ---
 
@@ -12,7 +12,29 @@ macOS cannot read BitLocker-encrypted drives. macbitlock is a free, open-source 
 
 ---
 
+## Current Status
+
+| Feature | Status |
+|---------|--------|
+| Decryption (reading BitLocker drives on Mac) | Stable |
+| Encryption (creating BitLocker drives on Mac) | Experimental -- see below |
+
+### Encryption: Known Limitations
+
+The encryption feature (`encrypt-usb`) can create BitLocker-compatible volumes that Windows recognizes and prompts for a password. However, there is an unresolved issue where **Windows corrupts the volume metadata after the first successful unlock**. Specifically:
+
+- First plug into Windows: password prompt appears, password is accepted, drive unlocks correctly.
+- After ejecting and re-plugging the USB: Windows reports "The BitLocker encryption on this drive isn't compatible with your version of Windows."
+
+This appears to be caused by Windows rewriting the boot sector and/or metadata block pointers during unlock in a way that is incompatible with the volume structure created by macbitlock. The investigation is ongoing. The BitLocker on-disk format is not publicly documented by Microsoft and has been reverse-engineered from available sources.
+
+If you are interested in helping fix this, see the technical details in the source code comments and open an issue.
+
+---
+
 ## Features
+
+### Decryption (Stable)
 
 - Decrypt BitLocker To Go encrypted USB drives and external volumes
 - Supports password and recovery key (48-digit) authentication
@@ -26,6 +48,15 @@ macOS cannot read BitLocker-encrypted drives. macbitlock is a free, open-source 
 - Tested on Apple Silicon (M1, M2, M3, M4) Macs. Intel Macs are not tested but should work since the implementation is pure Python.
 - Progress indicator during decryption
 - Volume inspection command to view encryption details before decrypting
+
+### Encryption (Experimental)
+
+- Encrypt FAT32 USB drives with BitLocker-compatible protection
+- Password and recovery key protectors
+- AES-CBC 128-bit encryption (maximum Windows compatibility)
+- "Encrypt entire drive" and "encrypt used space only" modes
+- Automated flow: drive detection, unmounting, in-place encryption, progress display
+- Generates a 48-digit recovery key for emergency access
 
 ---
 
@@ -103,6 +134,20 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Encrypt a USB drive (Experimental)
+
+1. Plug in a FAT32-formatted USB drive.
+2. Run the encryption command:
+
+```bash
+sudo .venv/bin/python -m macbitlock encrypt-usb
+```
+
+3. Follow the interactive prompts to select the drive, choose full or used-space-only encryption, and set a password.
+4. The tool displays a recovery key. Save it somewhere safe.
+
+Note: `sudo` is required for raw device access on macOS. Use the full path to the virtual environment Python when running with sudo.
+
 ### Decrypt a BitLocker USB drive
 
 1. Plug in the BitLocker-encrypted USB drive.
@@ -167,6 +212,12 @@ Decrypt a BitLocker-encrypted volume or disk image.
 
 Either `--password` or `--recovery-key` must be provided.
 
+### `macbitlock encrypt-usb`
+
+Encrypt a FAT32 USB drive with BitLocker-compatible protection (experimental).
+
+The command runs interactively: it detects external drives, prompts for encryption mode and password, then encrypts in place with a progress indicator.
+
 ### `macbitlock info`
 
 Display information about a BitLocker-encrypted volume.
@@ -204,12 +255,15 @@ macbitlock/
     __main__.py       Enables python -m macbitlock
     cli.py            Command-line interface (click-based)
     constants.py      BitLocker magic values and enumerations
-    volume.py         Volume header parsing (NTFS and FAT32)
+    volume.py         Volume header parsing and construction
     metadata.py       FVE metadata block parsing
-    keys.py           Key derivation, stretching, and unwrapping
-    crypto.py         AES-XTS, AES-CBC, and Elephant Diffuser decryption
+    keys.py           Key derivation, stretching, wrapping, and unwrapping
+    crypto.py         AES-XTS, AES-CBC, and Elephant Diffuser encryption/decryption
     partition.py      MBR and VHD container detection
     decryptor.py      High-level decryption orchestrator
+    builder.py        FVE metadata block construction for encryption
+    encryptor.py      High-level encryption orchestrator
+    usb.py            macOS USB drive detection and management
 requirements.txt      Python dependencies
 ```
 
@@ -217,8 +271,8 @@ requirements.txt      Python dependencies
 
 ## Roadmap
 
-- **Phase 1 (current):** BitLocker decryption on macOS -- password and recovery key support
-- **Phase 2:** BitLocker encryption -- create BitLocker To Go volumes from macOS
+- **Phase 1 (complete):** BitLocker decryption on macOS -- password and recovery key support
+- **Phase 2 (in progress):** BitLocker encryption -- create BitLocker To Go volumes from macOS. First unlock works; investigating metadata persistence after eject/replug.
 - **Phase 3:** macOS GUI app -- drag-and-drop interface for encrypt and decrypt
 
 ---
@@ -235,7 +289,9 @@ Not yet. Currently macbitlock decrypts to a disk image, which you then mount wit
 
 ### Is this safe to use with important data?
 
-macbitlock only reads from the encrypted volume. It never writes to the source device. Your encrypted drive is not modified in any way.
+For decryption: macbitlock only reads from the encrypted volume. It never writes to the source device. Your encrypted drive is not modified in any way.
+
+For encryption: the `encrypt-usb` command writes directly to the USB drive. All existing data on the drive will be encrypted in place. Make sure you have backups before using this feature.
 
 ### Does this support TPM-only BitLocker?
 
