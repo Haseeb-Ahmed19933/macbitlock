@@ -126,13 +126,19 @@ def decrypt_volume(
 
         # Unwrap VMK
         nonce = _build_nonce(vmk)
-        vmk_key = unwrap_key(vmk.encrypted_data, stretched_key, nonce)
+        try:
+            vmk_key = unwrap_key(vmk.encrypted_data, stretched_key, nonce)
+        except ValueError as e:
+            raise DecryptionError(str(e))
 
         # Unwrap FVEK using VMK
         fvek_nonce = struct.pack("<Q", fvek_entry.nonce_time) + struct.pack(
             "<I", fvek_entry.nonce_counter
         )
-        fvek = unwrap_key(fvek_entry.encrypted_data, vmk_key, fvek_nonce)
+        try:
+            fvek = unwrap_key(fvek_entry.encrypted_data, vmk_key, fvek_nonce)
+        except ValueError as e:
+            raise DecryptionError(f"Failed to unwrap FVEK: {e}")
 
         # Determine the encrypted volume size and data offset
         encrypted_size = block_header.encrypted_volume_size

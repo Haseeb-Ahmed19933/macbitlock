@@ -4,6 +4,7 @@ import hashlib
 import os
 import struct
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESCCM
 
 from .constants import EncryptionMethod
@@ -109,8 +110,14 @@ def unwrap_key(encrypted_data: bytes, key: bytes, nonce: bytes) -> bytes:
     ciphertext = encrypted_data[16:]
 
     aesccm = AESCCM(key, tag_length=16)
-    # cryptography library expects ciphertext + tag concatenated
-    plaintext = aesccm.decrypt(nonce, ciphertext + tag, None)
+    try:
+        plaintext = aesccm.decrypt(nonce, ciphertext + tag, None)
+    except InvalidTag:
+        raise ValueError(
+            "Incorrect password or recovery key. The provided credentials do not "
+            "match this volume. Please double-check your password (passwords are "
+            "case-sensitive) or try using a recovery key instead."
+        )
 
     # Parse the key container and return the key data starting at offset 12
     return plaintext[12:]

@@ -112,7 +112,8 @@ def decrypt(source, password, recovery_key, output):
         click.echo(f"\nError: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"\nUnexpected error: {e}", err=True)
+        msg = str(e) if str(e) else type(e).__name__
+        click.echo(f"\nUnexpected error: {msg}", err=True)
         sys.exit(1)
 
     elapsed = time.time() - start_time
